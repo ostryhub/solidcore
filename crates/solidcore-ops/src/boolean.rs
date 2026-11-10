@@ -285,3 +285,30 @@ mod tests {
         assert_eq!(back.counts().unwrap(), [6, 12, 8]);
     }
 }
+
+/// Performs one seeded Boolean on copies of the two borrowed operands. An empty
+/// result is a body, and `post_process` controls the kernel's pair cleanup.
+pub fn boolean_pair(a: &Body, b: &Body, op: BooleanOp, post_process: bool) -> Result<Body> {
+    use crate::session::{copy_operand, require_finished, run_on, seed_command};
+
+    let call = "boolean_pair";
+    let kind = match op {
+        BooleanOp::Union => BooleanOperation::Union,
+        BooleanOp::Subtract => BooleanOperation::Difference,
+        BooleanOp::Intersect => BooleanOperation::Intersection,
+    };
+    let options = MergeOptions {
+        boolean_post_process: post_process,
+        ..MergeOptions::default()
+    };
+    run_on(call, &[("left", a), ("right", b)], |kernel| {
+        if let Err(error) = require_finished(a, call).and_then(|()| require_finished(b, call)) {
+            return Ok(Err(error));
+        }
+        seed_command(kernel);
+        let left = copy_operand(kernel, a)?;
+        let right = copy_operand(kernel, b)?;
+        let outcome = sm::boolean_with_options(kernel, left, right, kind, options)?;
+        Ok(Ok(Body::new(outcome.result)))
+    })?
+}

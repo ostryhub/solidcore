@@ -421,3 +421,30 @@ pub fn draft(
 
 #[cfg(test)]
 mod tests;
+
+/// Applies a full offset to a copy of the borrowed body in a seeded command.
+/// The caller supplies a finite nonzero distance. The kernel extends convex edges
+/// and merges the result.
+pub fn offset_body(body: &Body, distance: f64) -> Result<Body> {
+    use crate::session::{copy_operand, require_finished, run_on, seed_command};
+    use solidcore::offset::offset_executive::p2::{OffsetOptions, offset_brep_simple};
+
+    let call = "offset_body";
+    let options = OffsetOptions {
+        distance,
+        extend_convex_edges: true,
+        merge_results: true,
+    };
+    run_on(call, &[("brep", body)], |kernel| {
+        if let Err(error) = require_finished(body, call) {
+            return Ok(Err(error));
+        }
+        seed_command(kernel);
+        let mut source = copy_operand(kernel, body)?;
+        Ok(Ok(Body::new(offset_brep_simple(
+            kernel,
+            &mut source,
+            options,
+        )?)))
+    })?
+}

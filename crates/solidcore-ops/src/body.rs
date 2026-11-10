@@ -24,7 +24,7 @@ use solidcore_convert::brep::{to_kernel, to_record, Order, Unsupported};
 use solidcore_record::brep::Brep as Record;
 
 use crate::error::status;
-use crate::session::{measure_body, read_body, run, with_body};
+use crate::session::{measure_body, read_body, run, seed_command, with_body, with_cached_body};
 use crate::split::copies_of;
 use crate::{Error, Result};
 
@@ -65,6 +65,14 @@ impl Body {
     #[allow(dead_code)] // the families' operations take their operands out
     pub(crate) fn into_inner(self) -> Brep {
         self.0.into_inner().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the body has no faces, including a successful empty Boolean result.
+    pub fn is_empty(&self) -> Result<bool> {
+        let body = self.0.lock().map_err(|_| {
+            Error::Internal("is_empty: the body was left unfinished by an earlier panic".to_owned())
+        })?;
+        Ok(body.faces().is_empty())
     }
 
     /// A deep copy (`SmApiBrepCopy`): the same topology in the same order, with the attributes
@@ -201,17 +209,31 @@ impl Body {
     /// [`Error::Unsupported`] for what the conversion does not carry yet; the kernel's error by
     /// its type.
     pub fn from_record(record: &Record, trusted: bool) -> Result<(Body, Order)> {
+        Self::convert_record(record, trusted, false)
+    }
+
+    /// Creates a body from a record with a fresh command seed.
+    pub fn from_record_seeded(record: &Record, trusted: bool) -> Result<(Body, Order)> {
+        Self::convert_record(record, trusted, true)
+    }
+
+    fn convert_record(record: &Record, trusted: bool, seeded: bool) -> Result<(Body, Order)> {
         let mut out = None;
         let mut refusal = None;
-        let made = run("brep::to_kernel", |k| match to_kernel(k, record, trusted) {
-            Ok((b, order)) => {
-                out = Some(order);
-                Ok(Some(b))
+        let made = run("brep::to_kernel", |k| {
+            if seeded {
+                seed_command(k);
             }
-            Err(Unsupported::Kernel(e)) => Err(e),
-            Err(e) => {
-                refusal = Some(refused(e));
-                Ok(None)
+            match to_kernel(k, record, trusted) {
+                Ok((b, order)) => {
+                    out = Some(order);
+                    Ok(Some(b))
+                }
+                Err(Unsupported::Kernel(e)) => Err(e),
+                Err(e) => {
+                    refusal = Some(refused(e));
+                    Ok(None)
+                }
             }
         });
         if let Some(e) = refusal {
@@ -245,6 +267,22 @@ impl Body {
             return Err(e);
         }
         out.ok_or(Error::Exception)
+    }
+
+    /// Reads a canonical record while updating only derived trim caches. Empty
+    /// bodies have no record. A panic leaves the body unavailable.
+    pub fn inspection_record(&self) -> Result<Option<(Record, Order)>> {
+        with_cached_body("inspection_record", self, |kernel, body| {
+            seed_command(kernel);
+            if body.faces().is_empty() {
+                return Ok(Ok(None));
+            }
+            match to_record(kernel, body) {
+                Ok(record) => Ok(Ok(Some(record))),
+                Err(Unsupported::Kernel(error)) => Err(error),
+                Err(error) => Ok(Err(refused(error))),
+            }
+        })?
     }
 }
 

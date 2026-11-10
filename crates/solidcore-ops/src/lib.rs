@@ -39,6 +39,7 @@ pub mod extend;
 pub mod file;
 pub mod label;
 pub mod measure;
+mod modeling;
 pub mod offset;
 pub mod order;
 pub mod pcurve;

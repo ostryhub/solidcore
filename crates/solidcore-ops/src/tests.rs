@@ -897,3 +897,16 @@ fn pcurves_of_malformed_records_are_refused_as_invalid() {
     // And a well-formed one still gets its pcurve.
     assert!(one(&line, [0., 1.]).is_ok());
 }
+
+use crate as solidcore_ops;
+
+#[path = "../tests/fixtures/public_provenance.rs"]
+mod public_provenance;
+
+#[test]
+fn public_provenance_carries_through_copy_split_and_merge() {
+    all_fixes();
+    public_provenance::attach_read_and_copy();
+    public_provenance::slab_split();
+    public_provenance::coplanar_merge();
+}

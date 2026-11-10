@@ -230,3 +230,61 @@ pub(crate) fn read<P: Provenance>(b: &Brep, e: EntityRef) -> Option<P> {
         .find(|(_, a)| a.attribute_id() == P::ID)?;
     a.application_value::<Carried<P>>().map(|c| c.0.clone())
 }
+
+/// The kinds of record occurrences that can carry application provenance.
+#[derive(Clone, Copy, Debug)]
+pub enum Entity {
+    /// A face occurrence in the record order.
+    Face,
+    /// An edge occurrence in the record order.
+    Edge,
+}
+
+impl Entity {
+    fn at(self, order: &crate::Order, index: usize) -> crate::Result<EntityRef> {
+        match self {
+            Self::Face => order.faces.get(index).copied().map(EntityRef::Face),
+            Self::Edge => order.edges.get(index).copied().map(EntityRef::Edge),
+        }
+        .ok_or(crate::Error::Argument)
+    }
+}
+
+impl crate::Body {
+    /// Replaces the provenance carried by a face or edge in this body's order.
+    pub fn set_provenance<P: Provenance>(
+        &self,
+        order: &crate::Order,
+        entity: Entity,
+        index: usize,
+        value: P,
+    ) -> crate::Result<()> {
+        let occurrence = entity.at(order, index)?;
+        crate::session::with_body("set_provenance", self, |_, body| {
+            Ok(attach(body, occurrence, value))
+        })?
+    }
+
+    /// Reads the provenance carried by a face or edge in this body's order.
+    pub fn provenance<P: Provenance>(
+        &self,
+        order: &crate::Order,
+        entity: Entity,
+        index: usize,
+    ) -> crate::Result<Option<P>> {
+        let occurrence = entity.at(order, index)?;
+        take::<P>()?;
+        crate::session::read_body("provenance", self, |_, body| {
+            match occurrence {
+                EntityRef::Face(face) => {
+                    body.face(face)?;
+                }
+                EntityRef::Edge(edge) => {
+                    body.edge(edge)?;
+                }
+                _ => unreachable!("provenance addresses only faces and edges"),
+            }
+            Ok(read(body, occurrence))
+        })
+    }
+}

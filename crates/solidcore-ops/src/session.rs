@@ -502,3 +502,39 @@ pub fn crash_test() -> Result<()> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+/// Starts a deterministic modelling command inside the session lock.
+pub(crate) fn seed_command(kernel: &mut Kernel) {
+    kernel.rng = solidcore::kernel::Rng::new(KernelOptions::default().seed);
+}
+
+/// Reads or updates derived caches in place. A panic leaves the body poisoned so it
+/// cannot be reused. Only queries that leave geometry and topology intact use this.
+pub(crate) fn with_cached_body<T: Answer>(
+    call: &'static str,
+    body: &Body,
+    f: impl FnOnce(&mut Kernel, &mut Brep) -> solidcore::Result<T>,
+) -> Result<T> {
+    run_on(call, &[("brep", body)], |kernel| {
+        if body.is_poisoned() {
+            return Ok(Err(unfinished(call)));
+        }
+        f(kernel, &mut body.lock()).map(Ok)
+    })?
+}
+
+/// Copies a borrowed modelling input with the session already held. A read panic
+/// cannot poison the cached operand. Callers hold at most one body lock at a time.
+pub(crate) fn copy_operand(kernel: &mut Kernel, body: &Body) -> solidcore::Result<Brep> {
+    let guard = body.lock();
+    let copied = catch_unwind(AssertUnwindSafe(|| brep_copy(kernel, &guard)));
+    drop(guard);
+    copied.unwrap_or_else(|panic| resume_unwind(panic))
+}
+
+pub(crate) fn require_finished(body: &Body, call: &'static str) -> Result<()> {
+    if body.is_poisoned() {
+        return Err(unfinished(call));
+    }
+    Ok(())
+}
